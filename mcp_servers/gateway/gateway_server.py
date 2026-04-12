@@ -19,6 +19,7 @@ SERVERS = [
     ("maps", "mcp_servers.servers.maps_server", "MapsServer"),
     ("density", "mcp_servers.servers.density_server", "DensityServer"),
     ("status", "mcp_servers.servers.status_server", "StatusServer"),
+    ("analysis", "mcp_servers.servers.analysis_server", "AnalysisServer"),
 ]
 
 

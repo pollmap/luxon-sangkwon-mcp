@@ -60,6 +60,8 @@ COLUMN_MAP = {
     "경도": "lng",
     "위도": "lat",
     "층정보": "floor_info",
+    "영업상태코드": "business_status",
+    "영업상태명": "business_status_name",
 }
 
 # SQLite 테이블 스키마
@@ -82,7 +84,9 @@ CREATE TABLE IF NOT EXISTS stores (
     old_address TEXT,
     lat REAL NOT NULL,
     lng REAL NOT NULL,
-    floor_info TEXT
+    floor_info TEXT,
+    business_status TEXT,
+    business_status_name TEXT
 );
 """
 
@@ -93,6 +97,7 @@ CREATE_INDEXES_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_sigungu ON stores(sigungu);",
     "CREATE INDEX IF NOT EXISTS idx_dong ON stores(dong);",
     "CREATE INDEX IF NOT EXISTS idx_lat_lng ON stores(lat, lng);",
+    "CREATE INDEX IF NOT EXISTS idx_business_status ON stores(business_status);",
 ]
 
 CREATE_RTREE_SQL = """
@@ -113,6 +118,19 @@ CREATE TABLE IF NOT EXISTS categories (
 );
 """
 
+CREATE_SNAPSHOTS_SQL = """
+CREATE TABLE IF NOT EXISTS store_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id TEXT NOT NULL,
+    business_status TEXT,
+    quarter TEXT NOT NULL,
+    category_m TEXT,
+    lat REAL,
+    lng REAL,
+    UNIQUE(store_id, quarter)
+);
+"""
+
 CREATE_META_SQL = """
 CREATE TABLE IF NOT EXISTS metadata (
     key TEXT PRIMARY KEY,
@@ -129,6 +147,7 @@ KEEP_COLUMNS = [
     "sido", "sigungu", "dong",
     "road_address", "old_address",
     "lat", "lng", "floor_info",
+    "business_status", "business_status_name",
 ]
 
 
@@ -154,6 +173,7 @@ def build_from_csvs(db_path: Path, csv_files: list, chunk_size: int = 50000):
     # Create tables
     conn.execute(CREATE_STORES_SQL)
     conn.execute(CREATE_RTREE_SQL)
+    conn.execute(CREATE_SNAPSHOTS_SQL)
     conn.execute(CREATE_CATEGORIES_SQL)
     conn.execute(CREATE_META_SQL)
     conn.commit()
@@ -244,6 +264,16 @@ def build_from_csvs(db_path: Path, csv_files: list, chunk_size: int = 50000):
         GROUP BY category_l, category_l_name;
     """)
 
+    # Build snapshots for quarterly tracking
+    import datetime
+    current_quarter = f"{datetime.date.today().year}Q{(datetime.date.today().month - 1) // 3 + 1}"
+    print(f"  Building store snapshots ({current_quarter})...")
+    conn.execute("""
+        INSERT OR IGNORE INTO store_snapshots (store_id, business_status, quarter, category_m, lat, lng)
+        SELECT store_id, business_status, ?, category_m, lat, lng
+        FROM stores WHERE store_id IS NOT NULL;
+    """, (current_quarter,))
+
     # Save metadata (parameterized queries)
     elapsed = time.time() - start_time
     conn.execute("INSERT OR REPLACE INTO metadata VALUES ('build_date', datetime('now'));")
@@ -309,8 +339,19 @@ def build_test_db(db_path: Path):
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute(CREATE_STORES_SQL)
     conn.execute(CREATE_RTREE_SQL)
+    conn.execute(CREATE_SNAPSHOTS_SQL)
     conn.execute(CREATE_CATEGORIES_SQL)
     conn.execute(CREATE_META_SQL)
+
+    # Business status distribution: 80% active, 10% closed, 10% suspended
+    statuses = [
+        ("01", "영업/정상", 80),
+        ("03", "폐업", 10),
+        ("02", "휴업", 10),
+    ]
+    status_pool = []
+    for code, name, weight in statuses:
+        status_pool.extend([(code, name)] * weight)
 
     store_id = 0
     rows = []
@@ -319,6 +360,7 @@ def build_test_db(db_path: Path):
         for _ in range(count):
             store_id += 1
             cat = random.choice(categories_m)
+            status = random.choice(status_pool)
             # Random offset within ~500m
             lat = center_lat + random.gauss(0, 0.002)
             lng = center_lng + random.gauss(0, 0.002)
@@ -338,6 +380,7 @@ def build_test_db(db_path: Path):
                 round(lat, 6),
                 round(lng, 6),
                 None,
+                status[0], status[1],
             ))
 
     conn.executemany("""
@@ -348,8 +391,9 @@ def build_test_db(db_path: Path):
             category_s, category_s_name,
             sido, sigungu, dong,
             road_address, old_address,
-            lat, lng, floor_info
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            lat, lng, floor_info,
+            business_status, business_status_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, rows)
 
     # Build R-tree
@@ -369,6 +413,15 @@ def build_test_db(db_path: Path):
         FROM stores WHERE category_m IS NOT NULL
         GROUP BY category_m, category_m_name, category_l;
     """)
+
+    # Build snapshots
+    import datetime
+    current_quarter = f"{datetime.date.today().year}Q{(datetime.date.today().month - 1) // 3 + 1}"
+    conn.execute("""
+        INSERT OR IGNORE INTO store_snapshots (store_id, business_status, quarter, category_m, lat, lng)
+        SELECT store_id, business_status, ?, category_m, lat, lng
+        FROM stores WHERE store_id IS NOT NULL;
+    """, (current_quarter,))
 
     # Metadata (parameterized)
     conn.execute("INSERT OR REPLACE INTO metadata VALUES ('build_date', datetime('now'));")

@@ -413,6 +413,226 @@ class SangkwonDBAdapter:
             return None
 
 
+    def closure_stats(
+        self,
+        lat: float,
+        lng: float,
+        radius_m: float = 500,
+        category_m: str = None,
+    ) -> Dict:
+        """
+        Get business status breakdown (영업/폐업/휴업) within radius.
+
+        Returns:
+            {
+                "total": int,
+                "active": int, "closed": int, "suspended": int,
+                "closure_rate_pct": float,
+                "risk_grade": str,
+                "by_status": [{"status", "count", "pct"}],
+                "city_average_closure_pct": float,
+            }
+        """
+        if not self.is_available:
+            return {"error": True, "message": "DB not available"}
+
+        south, west, north, east = bounding_box(lat, lng, radius_m)
+
+        conn = self._get_conn()
+        try:
+            if self._has_rtree:
+                sql = """
+                    SELECT s.business_status_name, COUNT(*) as cnt
+                    FROM stores s
+                    INNER JOIN store_rtree r ON s.id = r.id
+                    WHERE r.min_lat >= ? AND r.max_lat <= ?
+                      AND r.min_lng >= ? AND r.max_lng <= ?
+                """
+                params = [south, north, west, east]
+            else:
+                sql = """
+                    SELECT business_status_name, COUNT(*) as cnt
+                    FROM stores
+                    WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?
+                """
+                params = [south, north, west, east]
+
+            if category_m:
+                sql += " AND s.category_m = ?" if self._has_rtree else " AND category_m = ?"
+                params.append(category_m)
+            sql += " GROUP BY business_status_name"
+
+            rows = conn.execute(sql, params).fetchall()
+
+            status_map = {}
+            total = 0
+            for row in rows:
+                name = row[0] or "미분류"
+                cnt = row[1]
+                status_map[name] = cnt
+                total += cnt
+
+            active = status_map.get("영업/정상", 0)
+            closed = status_map.get("폐업", 0)
+            suspended = status_map.get("휴업", 0)
+
+            denominator = active + closed
+            closure_rate = round(closed / denominator * 100, 1) if denominator > 0 else 0
+
+            # City average: get sido from nearest store
+            city_avg = self._city_closure_average(conn, lat, lng, category_m)
+
+            by_status = [
+                {"status": name, "count": cnt, "pct": round(cnt / total * 100, 1) if total > 0 else 0}
+                for name, cnt in sorted(status_map.items(), key=lambda x: -x[1])
+            ]
+
+            return {
+                "total": total,
+                "active": active,
+                "closed": closed,
+                "suspended": suspended,
+                "closure_rate_pct": closure_rate,
+                "risk_grade": _closure_grade(closure_rate),
+                "by_status": by_status,
+                "city_average_closure_pct": city_avg,
+            }
+        finally:
+            conn.close()
+
+    def _city_closure_average(self, conn, lat: float, lng: float, category_m: str = None) -> float:
+        """Get closure rate average for the city (sido) this point belongs to."""
+        try:
+            # Find sido from nearest store
+            sido_row = conn.execute("""
+                SELECT sido FROM stores
+                ORDER BY ABS(lat - ?) + ABS(lng - ?) LIMIT 1
+            """, (lat, lng)).fetchone()
+            if not sido_row:
+                return 0
+            sido = sido_row[0]
+
+            sql = "SELECT business_status_name, COUNT(*) FROM stores WHERE sido = ?"
+            params = [sido]
+            if category_m:
+                sql += " AND category_m = ?"
+                params.append(category_m)
+            sql += " GROUP BY business_status_name"
+
+            rows = conn.execute(sql, params).fetchall()
+            city_active = 0
+            city_closed = 0
+            for row in rows:
+                if row[0] == "영업/정상":
+                    city_active = row[1]
+                elif row[0] == "폐업":
+                    city_closed = row[1]
+
+            denom = city_active + city_closed
+            return round(city_closed / denom * 100, 1) if denom > 0 else 0
+        except Exception:
+            return 0
+
+    def snapshot_compare(
+        self,
+        lat: float,
+        lng: float,
+        radius_m: float,
+        category_m: str = None,
+        quarter_current: str = None,
+        quarter_previous: str = None,
+    ) -> Dict:
+        """Compare store counts between two quarters for trend analysis."""
+        if not self.is_available:
+            return {"error": True, "message": "DB not available"}
+
+        conn = self._get_conn()
+        try:
+            # Get available quarters
+            quarters = [r[0] for r in conn.execute(
+                "SELECT DISTINCT quarter FROM store_snapshots ORDER BY quarter DESC"
+            ).fetchall()]
+
+            if not quarters:
+                return {"available": False, "message": "스냅샷 데이터 없음", "quarters": []}
+
+            if not quarter_current:
+                quarter_current = quarters[0]
+            if not quarter_previous and len(quarters) >= 2:
+                quarter_previous = quarters[1]
+
+            south, west, north, east = bounding_box(lat, lng, radius_m)
+
+            def count_quarter(q):
+                sql = """
+                    SELECT COUNT(*) FROM store_snapshots
+                    WHERE quarter = ? AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?
+                      AND business_status = '01'
+                """
+                params = [q, south, north, west, east]
+                if category_m:
+                    sql += " AND category_m = ?"
+                    params.append(category_m)
+                return conn.execute(sql, params).fetchone()[0]
+
+            current_count = count_quarter(quarter_current)
+
+            if quarter_previous:
+                previous_count = count_quarter(quarter_previous)
+                delta = current_count - previous_count
+                growth_rate = round(delta / previous_count * 100, 1) if previous_count > 0 else 0
+                if delta > 0:
+                    trend = "증가"
+                elif delta < 0:
+                    trend = "감소"
+                else:
+                    trend = "유지"
+            else:
+                previous_count = None
+                delta = None
+                growth_rate = None
+                trend = None
+
+            return {
+                "available": True,
+                "quarter_current": quarter_current,
+                "quarter_previous": quarter_previous,
+                "current_count": current_count,
+                "previous_count": previous_count,
+                "delta": delta,
+                "growth_rate_pct": growth_rate,
+                "trend_direction": trend,
+                "all_quarters": quarters,
+                "message": "다음 분기 데이터 축적 후 트렌드 비교 가능" if not quarter_previous else None,
+            }
+        finally:
+            conn.close()
+
+    def area_aggregate(
+        self,
+        locations: List[Tuple[str, float, float]],
+        category_m: str = None,
+        radius_m: float = 500,
+    ) -> List[Dict]:
+        """Batch analysis for multiple locations (for hot_areas)."""
+        results = []
+        for name, lat, lng in locations:
+            analysis = self.analyze(lat, lng, radius_m, category_m)
+            closure = self.closure_stats(lat, lng, radius_m, category_m)
+            results.append({
+                "name": name,
+                "lat": lat,
+                "lng": lng,
+                "total_stores": analysis.get("total_stores", 0),
+                "filtered_stores": analysis.get("filtered_stores", 0),
+                "competition_score": analysis.get("competition_score", 0),
+                "competition_grade": analysis.get("competition_grade", ""),
+                "closure_rate_pct": closure.get("closure_rate_pct", 0),
+                "risk_grade": closure.get("risk_grade", ""),
+            })
+        return results
+
+
 def _score_to_grade(score: int) -> str:
     """Convert competition score to Korean grade."""
     if score <= 20:
@@ -425,3 +645,15 @@ def _score_to_grade(score: int) -> str:
         return "높음"
     else:
         return "과포화"
+
+
+def _closure_grade(rate: float) -> str:
+    """Convert closure rate to risk grade."""
+    if rate < 10:
+        return "안정"
+    elif rate < 20:
+        return "보통"
+    elif rate < 30:
+        return "주의"
+    else:
+        return "위험"

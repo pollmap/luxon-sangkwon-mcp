@@ -55,6 +55,8 @@ DEFAULT_QUOTAS: Dict[str, int] = {
     "kakao": 300,
     "data_go_kr": 100,
     "sangkwon_db": 1000,
+    "seoul_data": 100,
+    "nexus_finance": 30,
     "default": 60,
 }
 
