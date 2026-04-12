@@ -37,7 +37,9 @@ AI Agent (Claude Code / Cursor / Claude Desktop)
  (250만 점포)   (지오코딩)   (4-tier / TokenBucket)
 ```
 
-## Tools (8)
+## Tools (13)
+
+### Phase 1 — 상권 기본 분석
 
 | Tool | Description | Example |
 |------|-------------|---------|
@@ -49,6 +51,16 @@ AI Agent (Claude Code / Cursor / Claude Desktop)
 | `reverse_geocode` | 좌표 → 주소 변환 | `37.498, 127.028` → `서울 강남구` |
 | `poi_search` | POI 검색 (카카오) | `"강남역 주변 스타벅스"` |
 | `maps_status` | 서버 상태 (DB 통계, API 가용성) | — |
+
+### Phase 2 — 심화 분석
+
+| Tool | Description | Example |
+|------|-------------|---------|
+| `sangkwon_closure_risk` | 폐업 리스크 분석 (영업/폐업/휴업 비율) | `"합정 카페 폐업률"` |
+| `sangkwon_startup_score` | AI 창업 적합도 (5팩터 가중 평가) | `"성수 카페 창업 점수"` |
+| `sangkwon_trend` | 상권 트렌드 (분기별 점포 변화) | `"홍대 카페 트렌드"` |
+| `sangkwon_hot_areas` | 뜨는 상권 랭킹 (전국 100곳) | `"카페 핫 상권 Top 10"` |
+| `sangkwon_report` | 종합 마크다운 리포트 | `"강남역 카페 리포트"` |
 
 ## How it works
 
@@ -175,25 +187,51 @@ luxon-sangkwon-mcp/
 │   │   └── responses.py         #   success_response / error_response
 │   ├── adapters/
 │   │   ├── kakao_geocode_adapter.py   # Kakao Local API
-│   │   └── sangkwon_db_adapter.py     # SQLite + R-tree engine
+│   │   ├── sangkwon_db_adapter.py     # SQLite + R-tree engine
+│   │   ├── seoul_golmok_adapter.py    # Seoul Open Data (sales, foot traffic)
+│   │   └── nexus_bridge_adapter.py    # Bridge to nexus-finance-mcp
 │   ├── gateway/
-│   │   └── gateway_server.py    # Mount 4 servers into 1
+│   │   └── gateway_server.py    # Mount 5 servers into 1
 │   └── servers/
 │       ├── sangkwon_server.py   # analyze, compare, nearby_similar
 │       ├── maps_server.py       # geocode, reverse_geocode, poi_search
 │       ├── density_server.py    # density_map
-│       └── status_server.py     # maps_status
+│       ├── status_server.py     # maps_status
+│       └── analysis_server.py   # closure_risk, startup_score, trend, hot_areas, report
 │
 ├── utils/
 │   ├── geo_utils.py             # Haversine, bounding box, grid
-│   └── category_codes.py        # 업종코드 매핑 (~50 Korean aliases)
+│   ├── category_codes.py        # 업종코드 매핑 (~50 Korean aliases)
+│   ├── scoring.py               # Normalize, weighted composite, grades
+│   └── hot_area_candidates.py   # 100 major Korean commercial districts
 │
 ├── scripts/
 │   ├── download_csv.py          # CSV download from data.go.kr
 │   └── build_db.py              # CSV → SQLite + R-tree builder
 │
+├── web/                         # Next.js 16 web dashboard
+│   └── src/
+│       ├── app/                 # 5 pages + 7 API routes
+│       ├── components/          # Maps, charts, analysis cards
+│       └── lib/                 # MCP client, formatters
+│
 └── data/                        # SQLite DB (gitignored)
 ```
+
+## Web Dashboard
+
+```bash
+cd web && npm install && npm run build
+MCP_SERVER_URL=http://127.0.0.1:8102/mcp npm start -- -p 3000
+```
+
+| Page | URL | Description |
+|------|-----|-------------|
+| Home | `/` | 검색 + 핵심 통계 |
+| Analyze | `/analyze?location=강남역&category=카페` | 상권 분석 (차트 + 점수) |
+| Compare | `/compare` | 복수 지역 비교 테이블 |
+| Heatmap | `/heatmap` | 격자 밀도 시각화 |
+| Report | `/report` | 종합 리포트 (마크다운) |
 
 ## Tech Stack
 
@@ -203,6 +241,7 @@ luxon-sangkwon-mcp/
 - **Data**: 소상공인시장진흥공단 상가정보 (public, free, quarterly)
 - **Caching**: 4-tier (LRU → TTL → DiskCache)
 - **Pattern**: nexus-finance-mcp architecture (BaseMCPServer + Adapter + Gateway)
+- **Web**: Next.js 16 + Tailwind + recharts + react-markdown
 
 ## Data Sources
 
@@ -210,13 +249,15 @@ luxon-sangkwon-mcp/
 |--------|---------|----------|------|
 | [소상공인 상가정보](https://www.data.go.kr/data/15083033/fileData.do) | ~250만 | 전국 | Free |
 | [Kakao Local API](https://developers.kakao.com/docs/latest/ko/local/dev-guide) | Realtime | 전국 | Free |
+| [서울 골목상권](https://data.seoul.go.kr) | Quarterly | 서울 | Free |
+| [nexus-finance-mcp](http://localhost:8100/mcp) | Realtime | 금융/매크로 | Internal |
 
 ## Roadmap
 
 - [x] **Phase 1** (MVP): 8 tools, SQLite+R-tree, Kakao geocoding
-- [ ] **Phase 2**: startup_score (AI 창업적합도), closure_risk, trend, report
-- [ ] **Phase 3**: Web dashboard (Next.js + Kakao Map)
-- [ ] **Phase 4**: SaaS (Kmong reports, Smithery, B2B API)
+- [x] **Phase 2**: 5 new tools (closure_risk, startup_score, trend, hot_areas, report)
+- [x] **Phase 3**: Web dashboard (Next.js, 5 pages, 7 API routes, E2E verified)
+- [ ] **Phase 4**: SaaS (Kmong reports, Smithery, B2B API, Kakao Map integration)
 
 ## Part of Luxon Maps Ecosystem
 
