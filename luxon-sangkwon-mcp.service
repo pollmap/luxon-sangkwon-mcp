@@ -5,10 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
-WorkingDirectory=/root/luxon-sangkwon-mcp
+User=mcpserver
+Group=mcpserver
+WorkingDirectory=/opt/luxon-sangkwon-mcp
 ExecStart=/usr/bin/python3 server.py --transport streamable-http --port 8102
-EnvironmentFile=/root/luxon-sangkwon-mcp/.env
+EnvironmentFile=/opt/luxon-sangkwon-mcp/.env
 StandardOutput=journal
 StandardError=journal
 Restart=always

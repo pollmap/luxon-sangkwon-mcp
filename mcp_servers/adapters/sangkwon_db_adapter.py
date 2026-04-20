@@ -305,9 +305,12 @@ class SangkwonDBAdapter:
         Returns list of store dicts with distance_m.
         """
         stores = self.query_radius(lat, lng, radius_m, category_m=category_m, limit=limit)
+        # Note: The upstream 소상공인시장진흥공단 dataset includes the store
+        # name (상호명) which is PII-adjacent for 개인사업자. We intentionally
+        # omit the `name` field from API responses; internal DB still stores
+        # it for dedup / joins, but it MUST NOT be returned to end users.
         return [
             {
-                "name": s.get("name", ""),
                 "category": s.get("category_m_name", ""),
                 "subcategory": s.get("category_s_name", ""),
                 "address": s.get("road_address") or s.get("old_address", ""),

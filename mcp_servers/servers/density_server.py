@@ -55,6 +55,10 @@ class DensityServer(BaseMCPServer):
             if not db.is_available:
                 return error_response("상권 DB가 준비되지 않았습니다.", code="DB_NOT_FOUND")
 
+            # Clamp inputs to guard against DoS via huge grids.
+            radius_m = max(100, min(int(radius_m), 5000))
+            cell_size_m = max(50, min(int(cell_size_m), 500))
+
             loc = _resolve_location(kakao, location)
             if not loc:
                 return error_response(f"'{location}' 위치를 찾을 수 없습니다.", code="LOCATION_NOT_FOUND")

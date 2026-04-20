@@ -252,6 +252,18 @@ MCP_SERVER_URL=http://127.0.0.1:8102/mcp npm start -- -p 3000
 | [서울 골목상권](https://data.seoul.go.kr) | Quarterly | 서울 | Free |
 | [nexus-finance-mcp](http://localhost:8100/mcp) | Realtime | 금융/매크로 | Internal |
 
+### Privacy & PII Handling (IMPORTANT)
+
+소상공인 상가정보 데이터셋에는 개인사업자 상호명(`상호명`)이 포함되며, 1인 업체의
+경우 이는 사실상 개인정보(PII-adjacent)로 간주된다. 본 서버는 다음 정책을 따른다.
+
+- **SQLite `stores.name` 컬럼**은 내부 조인/중복제거 용도로만 유지.
+- **MCP 응답(`nearby_similar`, 기타 점포 리스트)에는 `name` 필드를 포함하지 않는다.**
+  업종·주소·좌표·거리만 반환.
+- **마크다운 리포트(`sangkwon_report`)**도 상호명을 노출하지 않고 업종 라벨을 사용.
+- 자체 데이터셋 가공·배포 시 개인사업자 상호명은 **반드시 마스킹하거나 제거**해야
+  한다. 재배포 전 공공데이터포털 이용약관 확인 필수.
+
 ## Roadmap
 
 - [x] **Phase 1** (MVP): 8 tools, SQLite+R-tree, Kakao geocoding

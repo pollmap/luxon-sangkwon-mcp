@@ -29,6 +29,11 @@ from utils.hot_area_candidates import get_candidates_by_city
 logger = logging.getLogger(__name__)
 
 
+def _md_safe(s) -> str:
+    """Escape markdown-injection chars (pipes / newlines) from untrusted strings."""
+    return str(s).replace("|", "\\|").replace("\n", " ").replace("\r", " ")
+
+
 class AnalysisServer(BaseMCPServer):
     """Phase 2 분석 도구 MCP 서버."""
 
@@ -64,6 +69,8 @@ class AnalysisServer(BaseMCPServer):
             """
             if not db.is_available:
                 return error_response("상권 DB가 준비되지 않았습니다.", code="DB_NOT_FOUND")
+
+            radius_m = max(100, min(int(radius_m), 5000))
 
             loc = _resolve_location(kakao, location)
             if not loc:
@@ -199,6 +206,8 @@ class AnalysisServer(BaseMCPServer):
             if not db.is_available:
                 return error_response("상권 DB가 준비되지 않았습니다.", code="DB_NOT_FOUND")
 
+            radius_m = max(100, min(int(radius_m), 5000))
+
             loc = _resolve_location(kakao, location)
             if not loc:
                 return error_response(f"'{location}' 위치를 찾을 수 없습니다.", code="LOCATION_NOT_FOUND")
@@ -277,6 +286,8 @@ class AnalysisServer(BaseMCPServer):
             if not db.is_available:
                 return error_response("상권 DB가 준비되지 않았습니다.", code="DB_NOT_FOUND")
 
+            radius_m = max(100, min(int(radius_m), 5000))
+
             loc = _resolve_location(kakao, location)
             if not loc:
                 return error_response(f"'{location}' 위치를 찾을 수 없습니다.", code="LOCATION_NOT_FOUND")
@@ -304,7 +315,7 @@ class AnalysisServer(BaseMCPServer):
             startup_grade = score_to_grade(startup, STARTUP_GRADES)
 
             # Build markdown
-            resolved = loc["resolved_from"]
+            resolved = _md_safe(loc["resolved_from"])
             md = f"""# 상권 분석 리포트: {resolved}
 
 **분석 일시**: {analysis.get('data_date', 'N/A')}
@@ -330,7 +341,10 @@ class AnalysisServer(BaseMCPServer):
 |------|------|---------|------|
 """
             for i, cat in enumerate(analysis.get("category_distribution", [])[:10], 1):
-                md += f"| {i} | {cat['name']} | {cat['count']}개 | {cat['pct']}% |\n"
+                md += (
+                    f"| {i} | {_md_safe(cat['name'])} | "
+                    f"{_md_safe(cat['count'])}개 | {_md_safe(cat['pct'])}% |\n"
+                )
 
             md += f"""
 ---
@@ -373,11 +387,15 @@ class AnalysisServer(BaseMCPServer):
 
 ## 6. 주변 동종 업체
 
-| 이름 | 거리 | 주소 |
+| 업종 | 거리 | 주소 |
 |------|------|------|
 """
+                # Store names (상호명) are intentionally omitted for privacy.
                 for s in nearby[:10]:
-                    md += f"| {s['name']} | {s['distance_m']}m | {s['address']} |\n"
+                    label = _md_safe(s.get("subcategory") or s.get("category") or "동종업체")
+                    dist = _md_safe(s.get("distance_m", ""))
+                    addr = _md_safe(s.get("address", ""))
+                    md += f"| {label} | {dist}m | {addr} |\n"
 
             md += f"""
 ---

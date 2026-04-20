@@ -80,6 +80,9 @@ class SangkwonServer(BaseMCPServer):
             if not db.is_available:
                 return error_response("상권 DB가 준비되지 않았습니다. build_db.py를 실행하세요.", code="DB_NOT_FOUND")
 
+            # Clamp radius to a safe range to avoid runaway spatial scans.
+            radius_m = max(100, min(int(radius_m), 5000))
+
             loc = _resolve_location(kakao, location)
             if not loc:
                 return error_response(f"'{location}' 위치를 찾을 수 없습니다.", code="LOCATION_NOT_FOUND")
@@ -119,9 +122,14 @@ class SangkwonServer(BaseMCPServer):
             if not db.is_available:
                 return error_response("상권 DB가 준비되지 않았습니다.", code="DB_NOT_FOUND")
 
+            radius_m = max(100, min(int(radius_m), 5000))
+
             loc_names = [l.strip() for l in locations.split(";") if l.strip()]
             if len(loc_names) < 2:
                 return error_response("비교하려면 2개 이상의 지역이 필요합니다. 세미콜론(;)으로 구분하세요.", code="INVALID_INPUT")
+            # Cap the number of parallel locations to avoid DoS via huge list.
+            if len(loc_names) > 10:
+                return error_response("한 번에 비교할 수 있는 지역은 최대 10개입니다.", code="INVALID_INPUT")
 
             coords = []
             resolved = []
@@ -161,6 +169,8 @@ class SangkwonServer(BaseMCPServer):
             """
             if not db.is_available:
                 return error_response("상권 DB가 준비되지 않았습니다.", code="DB_NOT_FOUND")
+
+            radius_m = max(100, min(int(radius_m), 5000))
 
             loc = _resolve_location(kakao, location)
             if not loc:
